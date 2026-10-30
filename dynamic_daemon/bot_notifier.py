@@ -56,6 +56,9 @@ class BotNotifier:
     Formats IntradayCycleReports into clean Persian messages and dispatches to Bale and/or Telegram.
     """
 
+    BALE_API_BASE = "https://tapi.bale.ai"
+    TELEGRAM_API_BASE = "https://api.telegram.org"
+
     ACTION_BADGES = {
         "BUY_ENTRY": "🟢 سیگنال ورود (خرید)",
         "EXIT": "🔴 سیگنال خروج فوری (فروش)",

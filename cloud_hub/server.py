@@ -109,7 +109,7 @@ class BaleInteractiveCloudDaemon:
         RUNTIME_STATUS["gemini_ai_active"] = bool(self.gemini_key)
 
     def _bale_api(self, method: str, payload: Optional[Dict[str, Any]] = None, timeout: int = 12) -> Dict[str, Any]:
-        url = f"{BotNotifier.BALE_API_BASE}/bot{self.bot_token}/{method}"
+        url = f"https://tapi.bale.ai/bot{self.bot_token}/{method}"
         headers = {"Content-Type": "application/json", "User-Agent": "IranSmartMoneyCloudHub/2.0"}
         data = json.dumps(payload or {}).encode("utf-8") if payload is not None else None
         openers = (self.direct_opener,) if os.environ.get("CLOUD_MODE") == "1" else (self.direct_opener, self.proxy_opener)
