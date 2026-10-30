@@ -29,6 +29,7 @@ from dynamic_daemon.bot_notifier import BotNotifier
 from dynamic_daemon.daemon_cli import execute_single_cycle
 from dynamic_daemon.market_calendar import TehranMarketCalendar
 from dynamic_daemon.position_store import HybridPositionStore
+from dynamic_daemon.jalali import to_shamsi_datetime
 from cloud_hub.ai_brain import ConversationalMarketBrain
 from cloud_hub.market_tools import LiveMarketToolkit
 from cloud_hub.cloud_state_sync import restore_state_from_cloud, sync_file_to_cloud_async
@@ -51,7 +52,7 @@ class CloudHealthHandler(BaseHTTPRequestHandler):
             payload = {
                 "ok": True,
                 "engine": "Iran Smart Money + Dynamic Signal Cloud Hub",
-                "tehran_time": session.now_tehran.strftime("%Y-%m-%d %H:%M:%S"),
+                "tehran_time_shamsi": session.shamsi_datetime,
                 "market_session": session.session_label,
                 **RUNTIME_STATUS,
             }
@@ -222,9 +223,9 @@ class BaleInteractiveCloudDaemon:
                         force_open=False,
                         alerts_only=False,
                     )
-                    RUNTIME_STATUS["last_scan_time"] = session.now_tehran.strftime("%Y-%m-%d %H:%M")
+                    RUNTIME_STATUS["last_scan_time"] = to_shamsi_datetime(session.now_tehran, full_words=False)
                 else:
-                    print(f"🕒 [{session.now_tehran.strftime('%H:%M')}] {session.session_label} — آماده پاسخگویی در چت بله...")
+                    print(f"🕒 [{session.shamsi_datetime}] {session.session_label} — آماده پاسخگویی در چت بله...")
             except Exception as e:
                 print(f"[Scheduler Error] {e}")
 
@@ -263,7 +264,7 @@ class BaleInteractiveCloudDaemon:
             print(f"[GitHub Relay Notice] {e}")
 
     def start(self, with_http_server: bool = True) -> None:
-        RUNTIME_STATUS["started_at"] = TehranMarketCalendar.now().strftime("%Y-%m-%d %H:%M:%S")
+        RUNTIME_STATUS["started_at"] = to_shamsi_datetime(TehranMarketCalendar.now(), full_words=True)
         max_run_seconds = int(os.environ.get("MAX_RUN_SECONDS", "0") or "0")
 
         t_chat = threading.Thread(target=self.run_bale_chat_loop, name="BaleChatListener", daemon=True)

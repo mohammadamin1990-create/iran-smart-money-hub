@@ -6,6 +6,8 @@ Separates Equity/Leveraged hours (09:00-12:30) from Gold ETF hours (12:00-15:00)
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 
+from dynamic_daemon.jalali import to_shamsi_datetime
+
 
 TEHRAN_TZ = timezone(timedelta(hours=3, minutes=30))
 
@@ -19,6 +21,7 @@ class MarketSessionState:
     fixed_income_open: bool
     any_session_active: bool
     session_label: str
+    shamsi_datetime: str = ""
 
 
 class TehranMarketCalendar:
@@ -45,6 +48,7 @@ class TehranMarketCalendar:
     @classmethod
     def get_session_state(cls, dt: datetime | None = None, force_open: bool = False) -> MarketSessionState:
         now = dt.astimezone(TEHRAN_TZ) if dt else cls.now()
+        shamsi_now = to_shamsi_datetime(now, full_words=True)
         if force_open:
             return MarketSessionState(
                 now_tehran=now,
@@ -53,7 +57,8 @@ class TehranMarketCalendar:
                 gold_open=True,
                 fixed_income_open=True,
                 any_session_active=True,
-                session_label="شبیه‌سازی / بررسی آزاد تمام بازارها (Force Active)"
+                session_label="شبیه‌سازی / بررسی آزاد تمام بازارها (Force Active)",
+                shamsi_datetime=shamsi_now,
             )
 
         is_day = now.weekday() in cls.TRADING_WEEKDAYS
@@ -67,7 +72,8 @@ class TehranMarketCalendar:
                 gold_open=False,
                 fixed_income_open=False,
                 any_session_active=False,
-                session_label="تعطیل پایان هفته (پنجشنبه / جمعه)"
+                session_label="تعطیل پایان هفته (پنجشنبه / جمعه)",
+                shamsi_datetime=shamsi_now,
             )
 
         eq_open = cls.EQUITY_START <= t <= cls.EQUITY_END
@@ -95,7 +101,8 @@ class TehranMarketCalendar:
             gold_open=gold_open,
             fixed_income_open=fi_open,
             any_session_active=any_open,
-            session_label=label
+            session_label=label,
+            shamsi_datetime=shamsi_now,
         )
 
     @classmethod

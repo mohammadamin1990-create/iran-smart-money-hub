@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Tuple
 import urllib.request
 
 from dynamic_daemon.entry_exit_engine import IntradayCycleReport, SignalDecision
+from dynamic_daemon.jalali import to_shamsi_datetime, iso_or_str_to_shamsi
+from dynamic_daemon.market_calendar import TehranMarketCalendar
 
 
 def load_env_files(paths: List[str]) -> Dict[str, str]:
@@ -85,6 +87,159 @@ class BotNotifier:
     @property
     def telegram_configured(self) -> bool:
         return bool(self.config.get("TELEGRAM_BOT_TOKEN") and self.config.get("TELEGRAM_CHAT_ID"))
+
+    def format_engine1_report(
+        self,
+        shamsi_datetime: str,
+        regime_label: str,
+        alloc_weights: Dict[str, float],
+        fx_info: Dict[str, Any],
+        gold_funds: List[Dict[str, Any]],
+        leveraged_funds: List[Dict[str, Any]],
+        top_stocks: List[Dict[str, Any]],
+    ) -> str:
+        """
+        Formats Engine 1: Strategic Macro, Smart Money & Fundamental Valuation Report.
+        All timestamps strictly in Solar Hijri (تقویم هجری خورشیدی).
+        """
+        lines: List[str] = [
+            "🔭 **گـزارش مـوتـور ۱: تـحـلـیـل اسـتـراتـژیـک کـلان و پـول هـوشـمـنـد**",
+            f"🕒 تاریخ و ساعت (شمسی): `{shamsi_datetime}`",
+            "────────────────────────",
+            f"🧭 **رژیم کلان حاکم:** `{regime_label}`",
+        ]
+
+        if alloc_weights:
+            def _w(kw: str) -> float:
+                for k, v in alloc_weights.items():
+                    if kw in k:
+                        return v
+                return 0.0
+
+            lines.append("⚖️ **وزن بهینه پیشنهادی سبد بر اساس رژیم:**")
+            lines.append(
+                f"• صندوق طلا: `{_w('طلا'):.0f}%` | "
+                f"صندوق اهرمی: `{_w('اهرم'):.0f}%` | "
+                f"سهام لیدر: `{_w('سهام'):.0f}%` | "
+                f"درآمد ثابت: `{_w('ثابت'):.0f}%`"
+            )
+        lines.append("────────────────────────")
+
+        # 1. FX Radar
+        if fx_info:
+            free_usd = fx_info.get("free_usd_toman", 0.0)
+            implied = fx_info.get("dirham_implied_usd_toman", 0.0)
+            spread = fx_info.get("dirham_spread_pct", 0.0)
+            sig = fx_info.get("signal", "")
+            lines.append("💵 **رادار کلان ارز و پاریتی درهم:**")
+            lines.append(f"• دلار آزاد تهران: `{free_usd:,.0f}` تومان | دلار ضمنی درهم: `{implied:,.0f}` تومان")
+            lines.append(f"• اسپرد پاریتی درهم/دلار: `{spread:+.2f}%` | سیگنال ارزی: `{sig}`")
+            lines.append("────────────────────────")
+
+        # 2. Gold ETF Valuation & Arbitrage
+        if gold_funds:
+            lines.append("🪙 **ارزش‌گذاری و آربیتراژ صندوق‌های طلا (فاندبیس):**")
+            for g in gold_funds[:4]:
+                lines.append(
+                    f"• **{g.get('symbol')}** | حباب زنده: `{g.get('live_bubble_pct', 0.0):+.2f}%` | "
+                    f"شمش فیزیکی: `{g.get('bar_bullion_pct', 0.0):.0f}%` | سکه: `{g.get('coin_pct', 0.0):.0f}%`"
+                )
+            lines.append("────────────────────────")
+
+        # 3. Leveraged Funds 5D Calibration
+        if leveraged_funds:
+            lines.append("🚀 **رتبه‌بندی ۵ بعدی صندوق‌های اهرمی (فاندبیس):**")
+            for lv in leveraged_funds[:4]:
+                lines.append(
+                    f"• {lv.get('rank', 1)}. **{lv.get('symbol')}** | اهرم واقعی زنده: `{lv.get('real_leverage', 0.0):.2f}x` | "
+                    f"تخفیف NAV (حباب): `{lv.get('bubble_pct', 0.0):+.1f}%` | گردش: `{lv.get('trade_value_billion_toman', 0.0):,.0f}` م.ت"
+                )
+            lines.append("────────────────────────")
+
+        # 4. Top Institutional Consensus Stocks
+        if top_stocks:
+            lines.append("🏛 **۵ سهم برتر مورد اجماع و انباشت صندوق‌ها (۳ ماه اخیر):**")
+            for s in top_stocks[:5]:
+                net_b = s.get("net_buy_billion_toman_3m", 0.0)
+                funds_cnt = s.get("buyer_funds_count", 0)
+                lines.append(f"• **{s.get('symbol')}** | برآیند ورود صندوق‌ها: `{net_b:+,.0f}` میلیارد تومان ({funds_cnt} صندوق)")
+
+        lines.append("────────────────────────")
+        lines.append("💡 *برای دریافت سیگنال‌های عملیاتی و وضعیت حد ضررها، دستور «گزارش موتور ۲» را ارسال کنید.*")
+        return "\n".join(lines)
+
+    def format_engine2_report(
+        self,
+        report: IntradayCycleReport,
+        open_positions: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        """
+        Formats Engine 2: Dynamic 30-Minute Intraday Signal, Trailing Stop & Position Lifecycle Report.
+        All timestamps strictly in Solar Hijri (تقویم هجری خورشیدی).
+        """
+        lines: List[str] = [
+            "⚡ **گـزارش مـوتـور ۲: سـیـگـنـال‌هـای درون‌روزی ۳۰ دقـیـقـه‌ای و پـایـش پـوزیـشـن‌هـا**",
+            f"🕒 تاریخ و ساعت (شمسی): `{report.timestamp}`",
+            f"🏛 وضعیت تالار بورس: `{report.session.session_label}`",
+            "────────────────────────",
+        ]
+
+        urgent = report.urgent_signals
+        if urgent:
+            lines.append("🚨 **فرمان‌های اقدام فوری این نوبت:**")
+            for d in urgent:
+                badge = self.ACTION_BADGES.get(d.action, d.action)
+                mode_lbl = self.MODE_LABELS.get(d.tracking_mode, d.tracking_mode)
+                lines.append(f"\n{badge} — نماد **«{d.symbol}»**")
+                lines.append(f"• نوع پایش: `{mode_lbl}` | قیمت لحظه‌ای: `{d.current_price:,.0f}` ریال")
+                if d.action == "BUY_ENTRY":
+                    lines.append(f"• حد ضرر متحرک اولیه (Trailing Stop): `{d.trailing_stop_price:,.0f}` ریال")
+                    lines.append(f"• وزن تخصیص پیشنهادی: `{d.suggested_weight_pct:.0f}%`")
+                else:
+                    lines.append(f"• قیمت ورود: `{d.entry_price:,.0f}` | بازده: `{d.pnl_pct:+.2f}%`")
+                    lines.append(f"• ستون ماشه خروج: `{d.trigger_pillar}`")
+                lines.append(f"• منطق تصمیم: {d.reason}")
+            lines.append("────────────────────────")
+
+        # Active Positions (Real + Virtual)
+        positions_to_show = open_positions if open_positions is not None else [
+            {
+                "symbol": d.symbol,
+                "mode": "واقعی" if d.tracking_mode == "MANUAL_REAL" else "مجازی",
+                "entry_price_rial": d.entry_price,
+                "trailing_stop_rial": d.trailing_stop_price,
+                "pnl_pct": d.pnl_pct,
+                "current_price": d.current_price,
+            }
+            for d in report.decisions
+            if d.action == "HOLD"
+        ]
+
+        if positions_to_show:
+            lines.append("💼 **پوزیشن‌های فعال تحت حفاظت حد ضرر متحرک:**")
+            for p in positions_to_show:
+                sym = p.get("symbol", "")
+                mode = p.get("mode", "")
+                entry_p = p.get("entry_price_rial", 0.0)
+                trail_p = p.get("trailing_stop_rial", 0.0)
+                entry_str = f"`{entry_p:,.0f}`" if entry_p > 0 else "—"
+                lines.append(
+                    f"• **{sym}** [{mode}] | قیمت ورود: {entry_str} | "
+                    f"حد ضرر متحرک (Trailing Stop): `{trail_p:,.0f}` ریال"
+                )
+            lines.append("────────────────────────")
+
+        # Watchlist / Pending dips
+        waits = [d for d in report.decisions if d.action == "WAIT"]
+        if waits:
+            lines.append("⏳ **دیده‌بان شکار درون‌روزی (صبر برای تایید نقطه ورود):**")
+            for d in waits:
+                p_str = f"`{d.current_price:,.0f}` ریال" if d.current_price > 0 else "تابلو بسته"
+                lines.append(f"• **{d.symbol}** ({p_str}): {d.reason}")
+
+        lines.append("────────────────────────")
+        lines.append("💡 *برای ثبت خرید واقعی خود بنویسید: `خرید نماد قیمت_ریال مبلغ_تومان`*")
+        return "\n".join(lines)
 
     def format_cycle_message(self, report: IntradayCycleReport) -> str:
         """

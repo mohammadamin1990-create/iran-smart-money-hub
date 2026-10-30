@@ -27,6 +27,26 @@ def to_english_digits(s: str) -> str:
 TOOL_DECLARATIONS = [
     {
         "type": "function",
+        "name": "get_engine1_report",
+        "description": "گزارش تفکیک‌شده و مستقل موتور ۱ (تحلیل استراتژیک کلان، پول هوشمند، رادار پاریتی درهم، ارزش‌گذاری طلا و اهرمی و ۵ سهم اجماع صندوق‌ها) به تاریخ دقیق شمسی.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "type": "function",
+        "name": "get_engine2_report",
+        "description": "گزارش تفکیک‌شده و مستقل موتور ۲ (سیگنال‌های درون‌روزی ۳۰ دقیقه‌ای، وضعیت حد ضرر متحرک، پایش پوزیشن‌ها و دیده‌بان ورود/خروج) به تاریخ دقیق شمسی.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "capital_toman": {
+                    "type": "number",
+                    "description": "کل سرمایه کاربر به تومان (پیش‌فرض 10000000 تومان)",
+                }
+            },
+        },
+    },
+    {
+        "type": "function",
         "name": "run_live_market_scan",
         "description": "اسکن کامل و زنده کل بازار (طلا، صندوق اهرمی، ۵ سهم برتر پول هوشمند و اسپرد درهم) و صدور سیگنال ورود/خروج.",
         "parameters": {
@@ -115,6 +135,8 @@ class ConversationalMarketBrain:
         self.system_instruction = self._load_knowledge_base()
         self.memory = self._load_memory()
         self.available_functions: Dict[str, Callable[..., Any]] = {
+            "get_engine1_report": self.toolkit.get_engine1_report,
+            "get_engine2_report": self.toolkit.get_engine2_report,
             "run_live_market_scan": self.toolkit.run_live_market_scan,
             "analyze_symbol": self.toolkit.analyze_symbol,
             "get_leveraged_ranking": self.toolkit.get_leveraged_ranking,
@@ -276,12 +298,15 @@ class ConversationalMarketBrain:
 
         # 1. Help / Greeting
         if lower in ("/start", "/help", "سلام", "درود", "راهنما", "کمک", "منو"):
-            ai_badge = "🟢 فعال (Gemini 3.8 Flash)" if self.gemini_api_key else "⚡ حالت دستیار هوشمند کمی (آماده ارتقا با GEMINI_API_KEY)"
+            ai_badge = "🟢 فعال (Gemini 3.8 Flash)" if self.gemini_api_key else "⚡ حالت دستیار هوشمند کمی"
             return (
-                "سلام! من دستیار دوطرفه بازار سرمایه شما هستم (متصل به هر دو موتور «پول هوشمند + فاندبیس» و «سیگنال ۳۰ دقیقه‌ای»).\n"
-                f"🧠 وضعیت مغز گفتگو: {ai_badge}\n\n"
-                "هر زمان می‌توانید به فارسی طبیعی برایم بنویسید:\n"
-                "• **«سیگنال»** یا **«الان چی بخرم؟»** ← اسکن زنده کل بازار و سبد پیشنهادی\n"
+                "سلام! من دستیار هوشمند بازار سرمایه شما هستم (تفکیک دو موتور تحلیلی و معاملاتی بورس ایران).\n"
+                f"🧠 وضعیت مغز گفتگو: {ai_badge}\n"
+                "📅 تقویم: تمام گزارش‌ها به تاریخ دقیق شمسی ارائه می‌شوند.\n\n"
+                "📋 **دستورات تفکیک‌شده دو موتور:**\n"
+                "• **«موتور ۱»** (یا `/engine1`) ← گزارش جامع موتور ۱: تحلیل استراتژیک کلان، رادار پاریتی درهم، ارزش‌گذاری طلا و اهرمی و ۵ سهم حقوقی\n"
+                "• **«موتور ۲»** (یا `/engine2` یا «سیگنال») ← گزارش جامع موتور ۲: سیگنال‌های ۳۰ دقیقه‌ای درون‌روزی، حد ضرر متحرک و وضعیت پوزیشن‌ها\n\n"
+                "🔎 **دستورات تکمیلی:**\n"
                 "• **نام هر نماد** (مثلاً **«فولاد»**، **«آکو رو بخرم؟»**، **«عیار»**، **«بیدار»**) ← کالبدشکافی ۳ لایه زنده نماد\n"
                 "• **«اهرمی»** ← جدول مقایسه زنده ضریب اهرم واقعی و حباب ۹ صندوق اهرمی\n"
                 "• **«طلا»** ← آربیتراژ زنده صندوق‌های طلا، درصد شمش و اسپرد درهم\n"
@@ -289,6 +314,15 @@ class ConversationalMarketBrain:
                 "• **«خرید بیدار 63700 5000000»** ← ثبت خرید واقعی (قیمت ریال + مبلغ تومان)\n"
                 "• **«فروش بیدار 68500»** ← ثبت فروش و محاسبه سود قطعی"
             )
+
+        # 1.5. Distinct Engine 1 & Engine 2 Reports
+        if any(k in msg_en for k in ("موتور ۱", "موتور 1", "موتور یک", "گزارش موتور ۱", "گزارش موتور 1", "گزارش کلان", "تحلیل کلان")) or lower in ("/engine1", "engine1"):
+            rep1 = self.toolkit.get_engine1_report()
+            return rep1.get("formatted_report", "⚠️ خطا در تولید گزارش موتور ۱")
+
+        if any(k in msg_en for k in ("موتور ۲", "موتور 2", "موتور دو", "گزارش موتور ۲", "گزارش موتور 2", "سیگنال", "اسکن", "چی بخرم", "الان بخرم", "پیشنهاد خرید")) or lower in ("/engine2", "engine2"):
+            rep2 = self.toolkit.get_engine2_report()
+            return rep2.get("formatted_report", "⚠️ خطا در تولید گزارش موتور ۲")
 
         # 2. Register Buy: "خرید بیدار 63700 5000000" or "بیدار رو 63700 خریدم"
         buy_match = re.match(r"^خرید\s+([^\d\s]+)\s+(\d+(?:\.\d+)?)(?:\s+(\d+(?:\.\d+)?))?", msg_en)

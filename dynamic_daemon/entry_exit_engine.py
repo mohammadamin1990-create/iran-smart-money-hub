@@ -33,6 +33,7 @@ from src.analytics.sector_rotation import SectorRotationAnalyzer
 from src.analytics.smart_money_screener import SmartMoneyScreener, SmartMoneyCandidate
 from src.analytics.lagging_detector import ValuationLaggingDetector, ValuationLaggingReport
 from src.analytics.fx_macro_radar import FXMacroRadar, FXMacroRadarSnapshot
+from dynamic_daemon.jalali import to_shamsi_datetime
 from src.analytics.asset_allocator import MultiRegimeAssetAllocator, DynamicAllocationPlan, MarketRegime
 
 from dynamic_daemon.market_calendar import MarketSessionState, TehranMarketCalendar
@@ -321,7 +322,7 @@ class IntradayEntryExitEngine:
                 held_now.add(sym)
 
         return IntradayCycleReport(
-            timestamp=session.now_tehran.strftime("%Y-%m-%d %H:%M:%S"),
+            timestamp=to_shamsi_datetime(session.now_tehran, full_words=True),
             session=session,
             regime=alloc_plan.regime,
             regime_changed=regime_changed,

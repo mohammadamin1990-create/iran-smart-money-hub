@@ -10,6 +10,7 @@ import os
 from typing import Dict, List, Optional
 
 from dynamic_daemon.market_calendar import TehranMarketCalendar
+from dynamic_daemon.jalali import to_shamsi_datetime
 
 
 @dataclass
@@ -113,8 +114,10 @@ class HybridPositionStore:
 
     def save(self) -> None:
         os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
+        now_dt = TehranMarketCalendar.now()
         payload = {
-            "updated_at": TehranMarketCalendar.now().isoformat(),
+            "updated_at": to_shamsi_datetime(now_dt, full_words=True),
+            "updated_at_iso": now_dt.isoformat(),
             "last_regime": self.last_regime,
             "positions": {sym: asdict(pos) for sym, pos in self.positions.items()},
             "closed_history": [asdict(c) for c in self.closed_history[-100:]],
@@ -153,7 +156,7 @@ class HybridPositionStore:
             peak_price=entry_price,
             base_trailing_pct=self.default_trail_for(asset_class),
             allocated_toman=allocated_toman,
-            entry_time=TehranMarketCalendar.now().strftime("%Y-%m-%d %H:%M"),
+            entry_time=to_shamsi_datetime(TehranMarketCalendar.now(), full_words=False),
             entry_regime=entry_regime,
             entry_bubble_pct=entry_bubble_pct
         )
@@ -187,7 +190,7 @@ class HybridPositionStore:
             peak_price=entry_price,
             base_trailing_pct=trail,
             allocated_toman=allocated_toman or (existing.allocated_toman if existing else 0.0),
-            entry_time=TehranMarketCalendar.now().strftime("%Y-%m-%d %H:%M"),
+            entry_time=to_shamsi_datetime(TehranMarketCalendar.now(), full_words=False),
             entry_regime=existing.entry_regime if existing else self.last_regime,
             entry_bubble_pct=existing.entry_bubble_pct if existing else 0.0,
             exit_alert_triggered=False,
@@ -243,7 +246,7 @@ class HybridPositionStore:
             realized_pnl_pct=pnl,
             allocated_toman=pos.allocated_toman,
             entry_time=pos.entry_time,
-            exit_time=TehranMarketCalendar.now().strftime("%Y-%m-%d %H:%M"),
+            exit_time=to_shamsi_datetime(TehranMarketCalendar.now(), full_words=False),
             exit_reason=reason
         )
         self.closed_history.append(closed)

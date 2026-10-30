@@ -28,6 +28,7 @@ from dynamic_daemon.market_calendar import TehranMarketCalendar
 from dynamic_daemon.position_store import HybridPositionStore
 from dynamic_daemon.entry_exit_engine import IntradayEntryExitEngine
 from dynamic_daemon.bot_notifier import BotNotifier
+from dynamic_daemon.jalali import to_shamsi_datetime, to_shamsi_date, iso_or_str_to_shamsi
 
 
 def normalize_fa(text: str) -> str:
@@ -63,6 +64,146 @@ class LiveMarketToolkit:
         store = HybridPositionStore(state_file=self.state_file)
         store.load()
         return store
+
+    def get_engine1_report(self) -> Dict[str, Any]:
+        """
+        Executes Engine 1: Macro Flow, USD/AED Parity Radar, Gold & Leveraged Valuation, and Top 5 Stocks.
+        Returns complete structured dict and formatted Shamsi Persian report.
+        """
+        session = TehranMarketCalendar.get_session_state(force_open=True)
+        now_dt = TehranMarketCalendar.now()
+        shamsi_dt = to_shamsi_datetime(now_dt, full_words=True)
+
+        # 1. FX Radar
+        fx_snap = None
+        fx_info = {}
+        try:
+            fx_snap = FXMacroRadar().analyze_macro_spread()
+            fx_info = {
+                "free_usd_toman": round(fx_snap.spot_usd_rials / 10.0, 0),
+                "dirham_implied_usd_toman": round(fx_snap.implied_usd_from_aed / 10.0, 0),
+                "dirham_spread_pct": round(fx_snap.dirham_arbitrage_spread_pct, 2),
+                "signal": fx_snap.macro_regime_signal,
+            }
+        except Exception:
+            pass
+
+        # 2. Gold Arbitrage
+        gold_data = self.get_gold_arbitrage()
+        gold_funds = gold_data.get("gold_funds", [])
+
+        # 3. Leveraged 5D Ranking
+        lev_data = self.get_leveraged_ranking()
+        leveraged_funds = lev_data.get("ranking", [])
+
+        # 4. Top 5 Stocks from Fundbase 3M accumulation
+        top_stocks = []
+        try:
+            ps = FundbasePortfolioSearchClient()
+            buys_3m = ps.get_top_fund_buys(months=3, level="symbol", direction="buy", limit=15)
+            for b in buys_3m:
+                sym_clean = normalize_fa(b.name)
+                if infer_asset_class(sym_clean) == "سهام و حق تقدم" and not sym_clean.startswith(("اراد", "اخزا", "تسه", "گام")):
+                    top_stocks.append({
+                        "symbol": b.name,
+                        "net_buy_billion_toman_3m": round(b.net_value_billion_toman, 1),
+                        "buyer_funds_count": b.buyer_count,
+                        "weight_change_pct": round(b.weight_change, 3),
+                    })
+                if len(top_stocks) >= 5:
+                    break
+        except Exception:
+            pass
+
+        # 5. Asset Allocation Plan & Regime
+        from src.analytics.asset_allocator import MultiRegimeAssetAllocator
+        dirham_spr = fx_snap.dirham_arbitrage_spread_pct if fx_snap else 0.0
+        alloc_plan = MultiRegimeAssetAllocator().generate_plan(
+            equity_net_inflow_b_toman=0.0,
+            buyer_power_ratio=1.0,
+            dirham_spread_pct=dirham_spr,
+        )
+        regime_label = alloc_plan.regime.value
+        alloc_weights = {a.asset_class: a.target_weight_pct for a in alloc_plan.allocations}
+
+        notifier = BotNotifier()
+        formatted_text = notifier.format_engine1_report(
+            shamsi_datetime=shamsi_dt,
+            regime_label=regime_label,
+            alloc_weights=alloc_weights,
+            fx_info=fx_info,
+            gold_funds=gold_funds,
+            leveraged_funds=leveraged_funds,
+            top_stocks=top_stocks,
+        )
+
+        return {
+            "ok": True,
+            "shamsi_datetime": shamsi_dt,
+            "regime": regime_label,
+            "allocation_weights": alloc_weights,
+            "fx_radar": fx_info,
+            "gold_funds": gold_funds[:5],
+            "leveraged_ranking": leveraged_funds[:5],
+            "top_stocks": top_stocks,
+            "formatted_report": formatted_text,
+        }
+
+    def get_engine2_report(self, capital_toman: float = 0.0) -> Dict[str, Any]:
+        """
+        Executes Engine 2: 30-Minute Dynamic Intraday Signal, Trailing Stop & Position Lifecycle.
+        Returns complete structured dict and formatted Shamsi Persian report.
+        """
+        cap = capital_toman if capital_toman > 0 else self.default_capital_toman
+        session_real = TehranMarketCalendar.get_session_state(force_open=False)
+        session_eval = TehranMarketCalendar.get_session_state(force_open=True)
+
+        df, source_label = LiveMarketFeed().fetch_snapshot()
+        if df.empty:
+            return {"ok": False, "error": "ارتباط با سرورهای داده زنده موقتاً برقرار نشد."}
+
+        fx_snap = None
+        try:
+            fx_snap = FXMacroRadar().analyze_macro_spread()
+        except Exception:
+            pass
+
+        tmp_dir = tempfile.mkdtemp(prefix="hub_engine2_")
+        try:
+            tmp_state = os.path.join(tmp_dir, "state.json")
+            if os.path.exists(self.state_file):
+                shutil.copy2(self.state_file, tmp_state)
+            temp_store = HybridPositionStore(state_file=tmp_state)
+            engine = IntradayEntryExitEngine(store=temp_store, total_capital_toman=cap)
+            report = engine.evaluate_cycle(df=df, fx_snap=fx_snap, session=session_eval, enrich_fundbase=True)
+
+            store_positions = self.get_portfolio_status().get("open_positions", [])
+            notifier = BotNotifier()
+            formatted_text = notifier.format_engine2_report(report=report, open_positions=store_positions)
+
+            return {
+                "ok": True,
+                "shamsi_datetime": report.timestamp,
+                "market_session": session_real.session_label,
+                "data_source": source_label,
+                "urgent_signals_count": len(report.urgent_signals),
+                "decisions": [
+                    {
+                        "symbol": d.symbol,
+                        "asset_class": d.asset_class,
+                        "action": d.action,
+                        "current_price": d.current_price,
+                        "trailing_stop": d.trailing_stop_price,
+                        "live_bubble_pct": round(d.live_bubble_pct, 2),
+                        "buyer_power": round(d.buyer_power, 2),
+                        "reason": d.reason,
+                    }
+                    for d in report.decisions
+                ],
+                "formatted_report": formatted_text,
+            }
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def run_live_market_scan(self, capital_toman: float = 0.0) -> Dict[str, Any]:
         """Runs a non-mutating live scan across Gold, Leveraged, Top 5 Stocks & Macro."""
@@ -219,7 +360,7 @@ class LiveMarketToolkit:
             sym_txs = [t for t in txs if normalize_fa(t.symbol) == sym]
             result["whale_transactions"] = [
                 {
-                    "date": t.date,
+                    "date": iso_or_str_to_shamsi(t.date),
                     "whale_alias": t.alias,
                     "side": "BUY" if t.is_buy else "SELL",
                     "value_billion_toman": round(t.value_billion_toman, 2),
@@ -276,18 +417,18 @@ class LiveMarketToolkit:
             return {"ok": False, "error": "داده زنده صندوق‌ها در دسترس نیست."}
 
         analyzer = LeveragedFundAnalyzer()
-        candidates = analyzer.analyze(df, fundbase_leveraged=lev_metrics)
+        candidates = analyzer.analyze(df, live_leverage_map=lev_metrics)
         items = []
         for idx, c in enumerate(candidates, 1):
             items.append({
                 "rank": idx,
                 "symbol": c.symbol,
                 "price_rial": c.close_price,
-                "bubble_pct": round(c.nav_discount_pct, 2),
-                "real_leverage": round(c.effective_leverage, 2),
-                "trade_value_billion_toman": round(c.trade_value / 10_000_000_000.0, 1),
-                "buyer_power": round(c.ind_buyer_power, 2),
-                "score": round(c.composite_score, 1),
+                "bubble_pct": round(c.p_nav_bubble_pct, 2),
+                "real_leverage": round(c.leverage_ratio, 2),
+                "trade_value_billion_toman": round(c.trade_value_b_toman, 1),
+                "buyer_power": round(c.buyer_power_ratio, 2),
+                "score": round(c.catch_up_score, 1),
             })
         return {"ok": True, "source": source_label, "ranking": items}
 
@@ -299,10 +440,10 @@ class LiveMarketToolkit:
         try:
             snap = FXMacroRadar().analyze_macro_spread()
             fx_info = {
-                "dirham_implied_usd_toman": round(snap.dirham_implied_usd, 0),
-                "free_usd_toman": round(snap.tehran_free_usd, 0),
-                "dirham_spread_pct": round(snap.dirham_vs_usd_spread_pct, 2),
-                "signal": snap.macro_signal,
+                "dirham_implied_usd_toman": round(snap.implied_usd_from_aed / 10.0, 0),
+                "free_usd_toman": round(snap.spot_usd_rials / 10.0, 0),
+                "dirham_spread_pct": round(snap.dirham_arbitrage_spread_pct, 2),
+                "signal": snap.macro_regime_signal,
             }
         except Exception:
             pass
@@ -345,7 +486,7 @@ class LiveMarketToolkit:
                     "peak_price_rial": p.peak_price,
                     "trailing_stop_rial": p.compute_trailing_stop(),
                     "allocated_toman": p.allocated_toman,
-                    "entry_time": p.entry_time,
+                    "entry_time": iso_or_str_to_shamsi(p.entry_time),
                 }
                 for p in store.positions.values()
             ],

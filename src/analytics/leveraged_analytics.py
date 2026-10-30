@@ -9,6 +9,8 @@ from typing import Dict, List, Optional
 import pandas as pd
 import numpy as np
 
+from src.data.fund_tracker import FundTracker
+
 
 @dataclass
 class LeveragedFundAnalysis:
@@ -70,7 +72,13 @@ class LeveragedFundAnalyzer:
         if df.empty:
             return []
 
-        lev_df = df[df.get("asset_class", "") == "صندوق اهرمی"].copy()
+        if "asset_class" in df.columns:
+            lev_df = df[df["asset_class"] == "صندوق اهرمی"].copy()
+        elif "symbol" in df.columns:
+            lev_df = df[df["symbol"].isin(FundTracker.LEVERAGED_FUNDS)].copy()
+        else:
+            lev_df = pd.DataFrame()
+
         if lev_df.empty:
             return []
 
