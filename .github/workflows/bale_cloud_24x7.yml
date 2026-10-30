@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: iran-bale-cloud-singleton
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   bale-cloud-hub:

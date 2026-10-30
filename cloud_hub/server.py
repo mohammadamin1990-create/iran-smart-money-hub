@@ -156,9 +156,10 @@ class BaleInteractiveCloudDaemon:
             res = self._bale_api("getUpdates", {"limit": 50}, timeout=8)
             updates = res.get("result") or []
             if updates:
-                next_off = max(int(u.get("update_id", 0)) for u in updates) + 1
-                self._save_offset(next_off)
-                return next_off
+                # Start from the earliest pending update so user messages sent during boot are answered
+                first_off = min(int(u.get("update_id", 0)) for u in updates)
+                self._save_offset(first_off)
+                return first_off
         except Exception:
             pass
         self._save_offset(0)
