@@ -7,6 +7,7 @@ import argparse
 import sys
 import os
 import io
+from typing import List, Dict, Optional, Any, Tuple
 
 # Ensure UTF-8 output encoding on Windows consoles
 if sys.platform == "win32":
