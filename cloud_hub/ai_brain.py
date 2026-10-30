@@ -190,8 +190,28 @@ class ConversationalMarketBrain:
             self._save_memory()
             return "🧹 حافظه کوتاه‌مدت گفتگو پاک‌سازی شد (قوانین هر دو موتور و پرتفوی شما کاملاً محفوظ است)."
 
-        # Try full Gemini 3.8 Flash AI Brain if API key is configured
-        if self.gemini_api_key:
+        # Fast-path for direct bot commands (answers in milliseconds)
+        msg_en = to_english_digits(clean_msg)
+        lower = msg_en.lower()
+        if (
+            lower in ("/start", "/help", "سلام", "درود", "راهنما", "کمک", "منو")
+            or any(k in msg_en for k in ("موتور ۱", "موتور 1", "موتور یک", "گزارش موتور ۱", "گزارش موتور 1", "گزارش کلان", "تحلیل کلان"))
+            or lower in ("/engine1", "engine1")
+            or any(k in msg_en for k in ("موتور ۲", "موتور 2", "موتور دو", "گزارش موتور ۲", "گزارش موتور 2", "سیگنال", "اسکن", "چی بخرم", "الان بخرم", "پیشنهاد خرید"))
+            or lower in ("/engine2", "engine2")
+            or any(k in msg_en for k in ("سبد", "پرتفو", "وضعیت پوزیشن", "پوزیشن های من", "چی دارم"))
+            or lower in ("وضعیت", "status")
+            or any(k in msg_en for k in ("اهرمی", "صندوق های اهرمی", "مقایسه اهرمی"))
+            or msg_en in ("طلا", "صندوق طلا", "حباب طلا", "شمش", "درهم") or "صندوق های طلا" in msg_en
+            or re.match(r"^خرید\s+([^\d\s]+)\s+(\d+(?:\.\d+)?)", msg_en)
+            or re.match(r"^فروش\s+([^\d\s]+)\s+(\d+(?:\.\d+)?)", msg_en)
+        ):
+            fast_ans = self._reply_deterministic(clean_msg)
+            self._record_turn(clean_msg, fast_ans)
+            return fast_ans
+
+        # Try full Gemini 3.8 Flash AI Brain if a valid Gemini API key is configured (starts with AIzaSy)
+        if self.gemini_api_key and self.gemini_api_key.startswith("AIzaSy"):
             ai_ans = self._reply_via_gemini(str(chat_id), clean_msg)
             if ai_ans:
                 self._record_turn(clean_msg, ai_ans)
