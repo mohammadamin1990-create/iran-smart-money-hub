@@ -111,4 +111,8 @@ class TehranMarketCalendar:
             return state.gold_open
         if "درآمد ثابت" in asset_class:
             return state.fixed_income_open
+        if "اهرمی" in asset_class:
+            # Leveraged funds on Farabourse trade through 15:00 along with mutual funds
+            t = state.now_tehran.time()
+            return state.is_trading_day and (cls.EQUITY_START <= t <= cls.FIXED_INCOME_END)
         return state.equity_open

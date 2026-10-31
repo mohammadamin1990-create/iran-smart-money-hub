@@ -40,6 +40,34 @@ from dynamic_daemon.market_calendar import MarketSessionState, TehranMarketCalen
 from dynamic_daemon.position_store import HybridPositionStore, PositionRecord
 
 
+STOCK_REFERENCE_PRICES: Dict[str, float] = {
+    "فولاد": 4850.0,
+    "شستا": 1280.0,
+    "فملی": 6920.0,
+    "ونوین": 3410.0,
+    "وغدیر": 18300.0,
+    "اروند": 11500.0,
+    "سیسکو": 16400.0,
+    "نوری": 218500.0,
+    "بوعلی": 64200.0,
+    "پارسان": 36100.0,
+    "تاپیکو": 14200.0,
+    "فارس": 9750.0,
+    "وبملت": 2450.0,
+    "شپنا": 4120.0,
+    "شتران": 2890.0,
+    "خودرو": 3150.0,
+    "خساپا": 2640.0,
+    "ثمر": 14616.0,
+    "شکام": 15200.0,
+    "وامیر": 14800.0,
+    "کپشیر": 38500.0,
+    "فنورد": 13230.0,
+    "حفاری": 6020.0,
+    "ودی": 6700.0,
+}
+
+
 @dataclass
 class SignalDecision:
     symbol: str
@@ -117,8 +145,9 @@ class IntradayEntryExitEngine:
         inst_sells: Dict[str, TopFundTradeItem] = {}
         whale_net_b_toman: Dict[str, float] = {}
         whale_aliases: Dict[str, str] = {}
+        whale_recent_txs: List[Dict[str, Any]] = []
         if not enabled:
-            return inst_buys, inst_sells, whale_net_b_toman, whale_aliases
+            return inst_buys, inst_sells, whale_net_b_toman, whale_aliases, whale_recent_txs
 
         try:
             ps_client = FundbasePortfolioSearchClient()
@@ -141,10 +170,20 @@ class IntradayEntryExitEngine:
                 whale_net_b_toman[sym] = whale_net_b_toman.get(sym, 0.0) + signed_val
                 if sym not in whale_aliases and abs(signed_val) >= 1.0:
                     whale_aliases[sym] = tx.alias
+
+                price = round(abs(tx.value_rial / tx.shares_change), 0) if tx.shares_change else 0.0
+                whale_recent_txs.append({
+                    "symbol": sym,
+                    "alias": tx.alias,
+                    "date": tx.date,
+                    "is_buy": tx.is_buy,
+                    "price_rial": price,
+                    "value_billion_toman": abs(tx.value_billion_toman),
+                })
         except Exception:
             pass
 
-        return inst_buys, inst_sells, whale_net_b_toman, whale_aliases
+        return inst_buys, inst_sells, whale_net_b_toman, whale_aliases, whale_recent_txs
 
     def evaluate_cycle(
         self,
